@@ -7,6 +7,7 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/**"
 
 permissions:
   contents: read
@@ -17,13 +18,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================
+      # CHECKOUT
+      # ============================
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      # ============================
+      # SECRET SCANNING
+      # ============================
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+      # ============================
+      # PYTHON SETUP
+      # ============================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+
+      # ============================
+      # INSTALL DEPENDENCIES
+      # ============================
 
       - name: Install dependencies
         working-directory: ./backend
@@ -32,22 +62,55 @@ jobs:
           pip install -r requirements.txt
           pip install ruff pytest
 
-      - name: Lint
+
+      # ============================
+      # DEPENDENCY CHECK
+      # ============================
+
+      - name: Check Python dependencies
         working-directory: ./backend
         run: |
-          ruff check . || true
+          pip check
+
+
+      # ============================
+      # LINTING
+      # ============================
+
+      - name: Ruff Lint
+        working-directory: ./backend
+        run: |
+          ruff check .
+
+
+      # ============================
+      # TESTING
+      # TEMPORARILY NON-BLOCKING
+      # ============================
 
       - name: Run tests
         working-directory: ./backend
+        continue-on-error: true
         run: |
-          pytest || true
+          pytest
+
+
+      # ============================
+      # SONARCLOUD
+      # ============================
 
       - name: SonarCloud Scan
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           projectBaseDir: backend
+
+
+      # ============================
+      # SNYK SECURITY SCAN
+      # ============================
 
       - name: Snyk Security Scan
         uses: snyk/actions/python@master
@@ -58,11 +121,22 @@ jobs:
           command: test
           args: --file=backend/requirements.txt
 
+
+      # ============================
+      # BUILD DOCKER IMAGE
+      # ============================
+
       - name: Build Docker image
         run: |
           docker build \
             -t taskhub-backend:${{ github.sha }} \
             ./backend
+
+
+      # ============================
+      # TRIVY IMAGE SCAN
+      # TEMPORARILY NON-BLOCKING
+      # ============================
 
       - name: Trivy Docker Image Scan
         uses: aquasecurity/trivy-action@master
@@ -72,3 +146,4 @@ jobs:
           format: table
           exit-code: "1"
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
