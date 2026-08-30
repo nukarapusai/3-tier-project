@@ -1,0 +1,39 @@
+name: Backend CD
+
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    branches: [main]
+    types:
+      - completed
+
+jobs:
+
+  deploy-backend:
+
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production-backend
+
+    steps:
+
+      - name: Deploy Backend to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.BACKEND_EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+          script: |
+            cd /home/ubuntu/3-tier-project
+
+            docker compose pull backend
+
+            docker compose up -d backend
+
+            docker image prune -f
+
+            echo "Backend deployment completed successfully"
