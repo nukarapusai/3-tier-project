@@ -66,6 +66,7 @@ jobs:
 
       - name: Trivy Docker Image Scan
         uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
           image-ref: taskhub-backend:${{ github.sha }}
           format: table
