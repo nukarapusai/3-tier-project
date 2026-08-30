@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
+
+from app.auth import create_access_token, hash_password, verify_password
 from app.database import get_connection
-from app.auth import hash_password, verify_password, create_access_token
 
 router = APIRouter()
 
@@ -42,25 +43,24 @@ def signup(payload: SignupRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Signup failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Signup failed: {exc!s}")
 
 
 @router.post("/login")
 def login(payload: LoginRequest):
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE email = %s", (str(payload.email),))
-                user = cur.fetchone()
-                if not user or not verify_password(payload.password, user["password_hash"]):
-                    raise HTTPException(status_code=401, detail="Invalid credentials")
+        with get_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE email = %s", (str(payload.email),))
+            user = cur.fetchone()
+            if not user or not verify_password(payload.password, user["password_hash"]):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
 
-                token = create_access_token({"sub": str(user["id"])})
-                return {"token": token}
+            token = create_access_token({"sub": str(user["id"])})
+            return {"token": token}
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Login failed: {exc!s}")
 
 
 @router.post("/reset-password")
@@ -80,4 +80,4 @@ def reset_password(payload: ResetPasswordRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {exc!s}")
