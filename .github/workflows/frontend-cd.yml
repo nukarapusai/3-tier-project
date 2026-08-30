@@ -32,7 +32,6 @@ jobs:
       # ============================
       # CHECKOUT
       # ============================
-
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -40,7 +39,6 @@ jobs:
       # ============================
       # AWS OIDC AUTHENTICATION
       # ============================
-
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -51,7 +49,6 @@ jobs:
       # ============================
       # LOGIN TO AMAZON ECR
       # ============================
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -60,7 +57,6 @@ jobs:
       # ============================
       # BUILD DOCKER IMAGE
       # ============================
-
       - name: Build Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -75,7 +71,6 @@ jobs:
       # ============================
       # CONTAINER SECURITY SCAN
       # ============================
-
       - name: Trivy Docker Image Scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -89,7 +84,6 @@ jobs:
       # ============================
       # PUSH IMAGE TO AMAZON ECR
       # ============================
-
       - name: Push Docker image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -102,7 +96,6 @@ jobs:
       # ============================
       # DEPLOYMENT INFORMATION
       # ============================
-
       - name: Display deployment image
         run: |
           echo "Image successfully pushed:"
