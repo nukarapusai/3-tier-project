@@ -1,7 +1,8 @@
 import os
 import sqlite3
-from dotenv import load_dotenv
+
 import psycopg2
+from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
 load_dotenv()
@@ -81,10 +82,9 @@ def get_connection():
 
 
 def init_db():
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
@@ -93,9 +93,9 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
-            )
-            cur.execute(
-                """
+        )
+        cur.execute(
+            """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -106,5 +106,5 @@ def init_db():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
-            )
-            conn.commit()
+        )
+        conn.commit()

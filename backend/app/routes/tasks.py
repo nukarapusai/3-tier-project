@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from app.database import get_connection
+
 from app.auth import get_current_user
+from app.database import get_connection
 
 router = APIRouter()
 
@@ -34,7 +35,7 @@ def create_task(payload: TaskCreate, user_id: int = Depends(get_current_user)):
                 conn.commit()
                 return dict(task)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Task creation failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Task creation failed: {exc!s}")
 
 
 @router.get("/")
@@ -46,16 +47,15 @@ def get_tasks(user_id: int = Depends(get_current_user)):
                 tasks = cur.fetchall()
                 return [dict(task) for task in tasks]
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Task fetch failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Task fetch failed: {exc!s}")
 
 
 @router.put("/{task_id}")
 def update_task(task_id: int, payload: TaskUpdate, user_id: int = Depends(get_current_user)):
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with get_connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     UPDATE tasks
                     SET title = COALESCE(%s, title),
                         description = COALESCE(%s, description),
@@ -64,17 +64,17 @@ def update_task(task_id: int, payload: TaskUpdate, user_id: int = Depends(get_cu
                     WHERE id = %s AND user_id = %s
                     RETURNING *
                     """,
-                    (payload.title, payload.description, payload.status, task_id, user_id),
-                )
-                task = cur.fetchone()
-                conn.commit()
-                if not task:
-                    raise HTTPException(status_code=404, detail="Task not found")
-                return dict(task)
+                (payload.title, payload.description, payload.status, task_id, user_id),
+            )
+            task = cur.fetchone()
+            conn.commit()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            return dict(task)
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Task update failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Task update failed: {exc!s}")
 
 
 @router.delete("/{task_id}")
@@ -91,4 +91,4 @@ def delete_task(task_id: int, user_id: int = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Task delete failed: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Task delete failed: {exc!s}")

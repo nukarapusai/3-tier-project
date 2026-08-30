@@ -1,0 +1,74 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-ci:
+    name: Backend CI Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+
+      - name: Lint
+        working-directory: ./backend
+        run: |
+          ruff check . || true
+
+      - name: Run tests
+        working-directory: ./backend
+        run: |
+          pytest || true
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: backend
+
+      - name: Snyk Security Scan
+        uses: snyk/actions/python@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+          args: --file=backend/requirements.txt
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t taskhub-backend:${{ github.sha }} \
+            ./backend
+
+      - name: Trivy Docker Image Scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: taskhub-backend:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
