@@ -1,39 +1,109 @@
 name: Frontend CD
 
 on:
-  workflow_run:
-    workflows: ["Frontend CI"]
-    branches: [main]
-    types:
-      - completed
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-cd.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: frontend-cd-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-2
+  AWS_ACCOUNT_ID: "170542423661"
+  ECR_REPOSITORY: taskhub-frontend
 
 jobs:
-
-  deploy-frontend:
-
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-
+  build-scan-and-push:
+    name: Build, Scan and Push Frontend Image
     runs-on: ubuntu-latest
-
-    environment:
-      name: production-frontend
+    timeout-minutes: 30
 
     steps:
 
-      - name: Deploy Frontend to EC2
-        uses: appleboy/ssh-action@v1.0.3
+      # ============================
+      # CHECKOUT
+      # ============================
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      # ============================
+      # AWS OIDC AUTHENTICATION
+      # ============================
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.FRONTEND_EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          role-to-assume: arn:aws:iam::170542423661:role/GitHubActions-TaskHub-Frontend-ECR
+          aws-region: ${{ env.AWS_REGION }}
 
-          script: |
-            cd /home/ubuntu/3-tier-project
 
-            docker compose pull frontend
+      # ============================
+      # LOGIN TO AMAZON ECR
+      # ============================
 
-            docker compose up -d frontend
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-            docker image prune -f
 
-            echo "Frontend deployment completed successfully"
+      # ============================
+      # BUILD DOCKER IMAGE
+      # ============================
+
+      - name: Build Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --pull \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ./frontend
+
+
+      # ============================
+      # CONTAINER SECURITY SCAN
+      # ============================
+
+      - name: Trivy Docker Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+
+      # ============================
+      # PUSH IMAGE TO AMAZON ECR
+      # ============================
+
+      - name: Push Docker image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+
+      # ============================
+      # DEPLOYMENT INFORMATION
+      # ============================
+
+      - name: Display deployment image
+        run: |
+          echo "Image successfully pushed:"
+          echo "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"

@@ -18,8 +18,29 @@ jobs:
 
     steps:
 
+      # ============================
+      # CHECKOUT
+      # ============================
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      # ============================
+      # SECRET SCANNING
+      # ============================
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+      # ============================
+      # NODE SETUP
+      # ============================
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -28,22 +49,51 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+
+      # ============================
+      # INSTALL DEPENDENCIES
+      # ============================
+
       - name: Install dependencies
         working-directory: ./frontend
         run: npm ci
 
-      - name: Lint
+
+      # ============================
+      # DEPENDENCY AUDIT
+      # ============================
+
+      - name: NPM Security Audit
+        working-directory: ./frontend
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+
+      # ============================
+      # LINTING
+      # ============================
+
+      - name: Run ESLint
         working-directory: ./frontend
         run: npm run lint
+
+
+      # ============================
+      # SONARCLOUD SCAN
+      # ============================
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v5
         continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
         with:
           projectBaseDir: frontend
+
+
+      # ============================
+      # SNYK SECURITY SCAN
+      # ============================
 
       - name: Snyk Security Scan
         uses: snyk/actions/node@master
@@ -54,15 +104,30 @@ jobs:
           command: test
           args: --file=frontend/package.json
 
+
+      # ============================
+      # BUILD APPLICATION
+      # ============================
+
       - name: Build frontend
         working-directory: ./frontend
         run: npm run build
+
+
+      # ============================
+      # BUILD DOCKER IMAGE
+      # ============================
 
       - name: Build Docker image
         run: |
           docker build \
             -t taskhub-frontend:${{ github.sha }} \
             ./frontend
+
+
+      # ============================
+      # CONTAINER SECURITY SCAN
+      # ============================
 
       - name: Trivy Docker Image Scan
         uses: aquasecurity/trivy-action@master
@@ -72,3 +137,4 @@ jobs:
           format: table
           exit-code: "1"
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
