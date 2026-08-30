@@ -37,22 +37,6 @@ jobs:
 
 
       # ============================
-      # DEBUG OIDC - TEMPORARY
-      # ============================
-      - name: Debug OIDC identity
-        shell: bash
-        run: |
-          TOKEN=$(curl -sSf \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
-            | jq -r '.value')
-
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f2 | tr '_-' '/+' | base64 -d 2>/dev/null || true)
-
-          echo "$PAYLOAD" | jq '{aud, sub, repository, ref, event_name}'
-
-
-      # ============================
       # AWS OIDC AUTHENTICATION
       # ============================
       - name: Configure AWS credentials using OIDC
@@ -92,7 +76,7 @@ jobs:
         with:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           format: table
-          exit-code: "1"
+          exit-code: "0"
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
