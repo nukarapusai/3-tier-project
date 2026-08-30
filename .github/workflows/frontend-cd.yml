@@ -17,9 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-south-2
-  AWS_ACCOUNT_ID: "170542423661"
-  ECR_REPOSITORY: taskhub-frontend
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
 jobs:
   build-scan-and-push:
@@ -42,8 +41,8 @@ jobs:
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::170542423661:role/GitHubActions-TaskHub-Frontend-ECR
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
 
       # ============================
