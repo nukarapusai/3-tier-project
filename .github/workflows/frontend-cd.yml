@@ -36,37 +36,55 @@ jobs:
 
     steps:
 
+      # ------------------------------------------------------
+      # CHECKOUT
+      # ------------------------------------------------------
+
       - name: Checkout code
         uses: actions/checkout@v4
 
 
-      # AWS OIDC
-      - name: Configure AWS credentials using OIDC
+      # ------------------------------------------------------
+      # AWS LOGIN USING OIDC
+      # ------------------------------------------------------
+
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
 
+      # ------------------------------------------------------
       # ECR LOGIN
+      # ------------------------------------------------------
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
 
+      # ------------------------------------------------------
       # CREATE IMAGE URI
+      # ------------------------------------------------------
+
       - name: Set image URI
         id: image
         run: |
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
 
-          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
-          echo "Image URI:"
+          echo "============================================"
+          echo "IMAGE URI"
           echo "$IMAGE_URI"
+          echo "============================================"
 
 
+      # ------------------------------------------------------
       # BUILD IMAGE
+      # ------------------------------------------------------
+
       - name: Build Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -78,7 +96,10 @@ jobs:
             ./frontend
 
 
-      # TRIVY SCAN - NON BLOCKING
+      # ------------------------------------------------------
+      # SECURITY SCAN
+      # ------------------------------------------------------
+
       - name: Trivy Docker Image Scan
         continue-on-error: true
         uses: aquasecurity/trivy-action@master
@@ -90,8 +111,11 @@ jobs:
           ignore-unfixed: true
 
 
+      # ------------------------------------------------------
       # PUSH IMAGE
-      - name: Push Docker image to Amazon ECR
+      # ------------------------------------------------------
+
+      - name: Push Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -100,17 +124,20 @@ jobs:
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
 
-      # DISPLAY IMAGE
-      - name: Display deployment image
+      # ------------------------------------------------------
+      # SUCCESS
+      # ------------------------------------------------------
+
+      - name: Display image
         run: |
           echo "============================================"
-          echo "Frontend image successfully pushed"
+          echo "Frontend image pushed successfully"
           echo "${{ steps.image.outputs.image_uri }}"
           echo "============================================"
 
 
   # ==========================================================
-  # DEPLOY FRONTEND TO EC2 USING AWS SSM
+  # DEPLOY FRONTEND TO EC2 USING SSM
   # ==========================================================
 
   deploy-frontend:
@@ -121,7 +148,10 @@ jobs:
 
     steps:
 
-      # AWS OIDC
+      # ------------------------------------------------------
+      # AWS LOGIN USING OIDC
+      # ------------------------------------------------------
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -129,41 +159,64 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
 
-      # DEPLOY TO EC2
-      - name: Deploy Frontend EC2 Instances
+      # ------------------------------------------------------
+      # DEPLOY
+      # ------------------------------------------------------
+
+      - name: Deploy Frontend to EC2
         env:
           IMAGE_URI: ${{ needs.build-scan-and-push.outputs.image_uri }}
           WEB_INSTANCE_IDS: ${{ vars.WEB_INSTANCE_IDS }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
 
         run: |
 
+          set -e
+
           echo "============================================"
-          echo "Starting Frontend Deployment"
+          echo "STARTING FRONTEND DEPLOYMENT"
+          echo "============================================"
           echo "Image: $IMAGE_URI"
           echo "Instances: $WEB_INSTANCE_IDS"
+          echo "Region: $AWS_REGION"
           echo "============================================"
 
+
+          # --------------------------------------------------
+          # VALIDATION
+          # --------------------------------------------------
+
           if [ -z "$IMAGE_URI" ]; then
-            echo "ERROR: IMAGE_URI is empty!"
+            echo "ERROR: IMAGE_URI is empty"
             exit 1
           fi
 
           if [ -z "$WEB_INSTANCE_IDS" ]; then
-            echo "ERROR: WEB_INSTANCE_IDS is empty!"
+            echo "ERROR: WEB_INSTANCE_IDS is empty"
             exit 1
           fi
+
+          if [ -z "$AWS_ACCOUNT_ID" ]; then
+            echo "ERROR: AWS_ACCOUNT_ID is empty"
+            exit 1
+          fi
+
+
+          # --------------------------------------------------
+          # CREATE SSM COMMAND JSON
+          # --------------------------------------------------
 
           cat > commands.json <<EOF
           {
             "commands": [
               "set -e",
 
+              "echo ============================================",
               "echo Starting frontend deployment",
-
-              "REGISTRY=\\$(echo $IMAGE_URI | cut -d/ -f1)",
+              "echo ============================================",
 
               "echo Logging into Amazon ECR",
-              "aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin \\$REGISTRY",
+              "aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com",
 
               "echo Pulling frontend image",
               "sudo docker pull $IMAGE_URI",
@@ -174,22 +227,40 @@ jobs:
               "echo Starting new frontend container",
               "sudo docker run -d --restart unless-stopped --name taskhub-frontend -p 80:80 $IMAGE_URI",
 
-              "echo Waiting for frontend",
+              "echo Waiting for container",
               "sleep 5",
 
-              "echo Checking frontend health",
-              "curl -f http://localhost",
-
-              "echo Running containers",
+              "echo Checking running containers",
               "sudo docker ps",
 
-              "echo Removing unused images",
+              "echo Checking frontend health",
+              "curl -fsS http://localhost",
+
+              "echo Removing unused Docker images",
               "sudo docker image prune -af || true",
 
-              "echo Frontend deployment completed successfully"
+              "echo ============================================",
+              "echo FRONTEND DEPLOYMENT SUCCESSFUL",
+              "echo ============================================"
             ]
           }
           EOF
+
+
+          # --------------------------------------------------
+          # VALIDATE JSON
+          # --------------------------------------------------
+
+          echo "Validating SSM command JSON..."
+
+          jq . commands.json > /dev/null
+
+          echo "commands.json is valid"
+
+
+          # --------------------------------------------------
+          # SEND SSM COMMAND
+          # --------------------------------------------------
 
           echo "Sending SSM command..."
 
@@ -203,35 +274,98 @@ jobs:
             --output text)
 
           echo "============================================"
-          echo "SSM Command ID: $COMMAND_ID"
+          echo "SSM COMMAND ID: $COMMAND_ID"
           echo "============================================"
+
+
+          # --------------------------------------------------
+          # WAIT FOR EACH INSTANCE
+          # --------------------------------------------------
 
           sleep 5
 
+          FAILED=0
+
           for INSTANCE_ID in $(echo "$WEB_INSTANCE_IDS" | tr ',' ' '); do
 
+            echo ""
             echo "============================================"
-            echo "Checking: $INSTANCE_ID"
+            echo "CHECKING INSTANCE: $INSTANCE_ID"
             echo "============================================"
 
-            aws ssm wait command-executed \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --region "$AWS_REGION"
+            STATUS="Pending"
 
-            echo "Deployment output:"
+            while true; do
+
+              STATUS=$(aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region "$AWS_REGION" \
+                --query "Status" \
+                --output text 2>/dev/null || echo "Pending")
+
+              echo "Current status: $STATUS"
+
+              if [ "$STATUS" = "Success" ]; then
+                break
+              fi
+
+              if [ "$STATUS" = "Failed" ] || \
+                 [ "$STATUS" = "Cancelled" ] || \
+                 [ "$STATUS" = "TimedOut" ] || \
+                 [ "$STATUS" = "Cancelling" ]; then
+
+                echo "Deployment failed on $INSTANCE_ID"
+
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --region "$AWS_REGION" \
+                  --output json || true
+
+                FAILED=1
+                break
+              fi
+
+              sleep 5
+
+            done
+
+
+            echo ""
+            echo "FINAL OUTPUT FOR $INSTANCE_ID"
 
             aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
               --region "$AWS_REGION" \
-              --output json
+              --output json || true
 
           done
 
 
+          # --------------------------------------------------
+          # FINAL RESULT
+          # --------------------------------------------------
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "============================================"
+            echo "FRONTEND DEPLOYMENT FAILED"
+            echo "============================================"
+            exit 1
+          fi
+
+          echo "============================================"
+          echo "FRONTEND DEPLOYMENT SUCCESSFUL ON ALL EC2 INSTANCES"
+          echo "============================================"
+
+
+      # ------------------------------------------------------
+      # FINAL SUCCESS
+      # ------------------------------------------------------
+
       - name: Deployment completed
         run: |
           echo "============================================"
-          echo "Frontend deployment completed successfully"
+          echo "Frontend CD completed successfully"
           echo "============================================"
