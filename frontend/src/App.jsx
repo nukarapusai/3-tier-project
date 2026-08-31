@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import DashboardPage from './pages/DashboardPage';
+import WorkoutDetailsPage from './pages/WorkoutDetailsPage';
 
 const ProtectedRoute = ({ children }) => {
   const token = localStorage.getItem('token');
@@ -19,6 +20,14 @@ function App() {
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workout/:workoutType"
+        element={
+          <ProtectedRoute>
+            <WorkoutDetailsPage />
           </ProtectedRoute>
         }
       />

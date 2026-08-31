@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { workoutCategories } from '../data/workoutPlans';
 import api from '../services/api';
+import '../styles/dashboard.css';
 
 function DashboardPage() {
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -25,6 +29,10 @@ function DashboardPage() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.href = '/login';
+  };
+
+  const handleWorkoutSelect = (slug) => {
+    navigate(`/workout/${slug}`);
   };
 
   const handleSubmit = async (e) => {
@@ -66,9 +74,47 @@ function DashboardPage() {
   return (
     <div className="dashboard-page">
       <header className="topbar">
-        <h1>TaskHub</h1>
+        <h1>FitTechCoach Dashboard</h1>
         <button onClick={handleLogout} className="logout-btn">Logout</button>
       </header>
+
+      {/* Workout Categories Section */}
+      <section className="workout-section">
+        <h2>Choose Your Workout</h2>
+        <div className="workout-grid">
+          {workoutCategories.map((category) => (
+            <div 
+              key={category.id} 
+              className="workout-card" 
+              onClick={() => handleWorkoutSelect(category.slug)}
+              style={{ 
+                borderColor: category.color,
+                backgroundImage: `linear-gradient(135deg, rgba(3, 6, 18, 0.18), rgba(3, 6, 18, 0.42)), url(${category.image})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat'
+              }}
+            >
+              <div className="workout-overlay"></div>
+              <div className="workout-content">
+                <div className="workout-emoji">{category.emoji}</div>
+                <h3>{category.name}</h3>
+                <button 
+                  type="button"
+                  className="start-btn" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleWorkoutSelect(category.slug);
+                  }}
+                  style={{ backgroundColor: category.color }}
+                >
+                  Start Workout
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="dashboard-grid">
         <div className="task-form-card">
