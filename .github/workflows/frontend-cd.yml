@@ -21,10 +21,17 @@ env:
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
 jobs:
+
+  # ==========================================
+  # BUILD, SCAN AND PUSH IMAGE TO ECR
+  # ==========================================
   build-scan-and-push:
     name: Build, Scan and Push Frontend Image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    outputs:
+      image_uri: ${{ steps.image.outputs.image_uri }}
 
     steps:
 
@@ -51,6 +58,20 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ============================
+      # CREATE IMAGE URI
+      # ============================
+      - name: Set image URI
+        id: image
+        run: |
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+          echo "Deploying image:"
+          echo "$IMAGE_URI"
 
 
       # ============================
