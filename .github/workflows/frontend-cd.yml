@@ -162,7 +162,7 @@ jobs:
         env:
           IMAGE_URI: ${{ needs.build-scan-and-push.outputs.image_uri }}
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          FRONTEND_INSTANCE_IDS: ${{ vars.FRONTEND_INSTANCE_IDS }}
+          WEB_INSTANCE_IDS: ${{ vars.WEB_INSTANCE_IDS }}
 
         run: |
 
