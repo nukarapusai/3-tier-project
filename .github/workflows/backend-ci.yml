@@ -7,7 +7,6 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
-      - ".github/workflows/**"
 
 permissions:
   contents: read

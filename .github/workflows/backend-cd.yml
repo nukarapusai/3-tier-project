@@ -1,39 +1,224 @@
 name: Backend CD
 
 on:
-  workflow_run:
-    workflows: ["Backend CI"]
-    branches: [main]
-    types:
-      - completed
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-cd.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: backend-cd-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  BACKEND_ECR_REPOSITORY: ${{ vars.BACKEND_ECR_REPOSITORY }}
 
 jobs:
 
-  deploy-backend:
-
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-
+  # ==========================================
+  # BUILD, SCAN AND PUSH BACKEND IMAGE
+  # ==========================================
+  build-scan-and-push:
+    name: Build, Scan and Push Backend Image
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-    environment:
-      name: production-backend
+    outputs:
+      image_uri: ${{ steps.image.outputs.image_uri }}
 
     steps:
 
-      - name: Deploy Backend to EC2
-        uses: appleboy/ssh-action@v1.0.3
+      # ============================
+      # CHECKOUT CODE
+      # ============================
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      # ============================
+      # AWS OIDC AUTHENTICATION
+      # ============================
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.BACKEND_EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-          script: |
-            cd /home/ubuntu/3-tier-project
 
-            docker compose pull backend
+      # ============================
+      # LOGIN TO AMAZON ECR
+      # ============================
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-            docker compose up -d backend
 
-            docker image prune -f
+      # ============================
+      # CREATE IMAGE URI
+      # ============================
+      - name: Set image URI
+        id: image
+        run: |
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.BACKEND_ECR_REPOSITORY }}:${{ github.sha }}"
 
-            echo "Backend deployment completed successfully"
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+          echo "Backend image:"
+          echo "$IMAGE_URI"
+
+
+      # ============================
+      # BUILD BACKEND DOCKER IMAGE
+      # ============================
+      - name: Build Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --pull \
+            -t $ECR_REGISTRY/$BACKEND_ECR_REPOSITORY:$IMAGE_TAG \
+            ./backend
+
+
+      # ============================
+      # TRIVY SECURITY SCAN
+      # NON-BLOCKING FOR NOW
+      # ============================
+      - name: Trivy Docker Image Scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.BACKEND_ECR_REPOSITORY }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+
+      # ============================
+      # PUSH IMAGE TO AMAZON ECR
+      # ============================
+      - name: Push Docker image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push \
+            $ECR_REGISTRY/$BACKEND_ECR_REPOSITORY:$IMAGE_TAG
+
+
+      # ============================
+      # DISPLAY IMAGE INFORMATION
+      # ============================
+      - name: Display deployment image
+        run: |
+          echo "======================================"
+          echo "Backend image successfully pushed"
+          echo "${{ steps.image.outputs.image_uri }}"
+          echo "======================================"
+
+
+  # ==========================================
+  # DEPLOY BACKEND TO EC2 USING AWS SSM
+  # ==========================================
+  deploy:
+    name: Deploy Backend to EC2
+    needs: build-scan-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      # ============================
+      # AWS OIDC AUTHENTICATION
+      # ============================
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+
+      # ============================
+      # DEPLOY USING AWS SSM
+      # ============================
+      - name: Deploy to Backend EC2 Instances
+        env:
+          IMAGE_URI: ${{ needs.build-scan-and-push.outputs.image_uri }}
+          BACKEND_INSTANCE_IDS: ${{ vars.BACKEND_INSTANCE_IDS }}
+        run: |
+
+          echo "======================================"
+          echo "Starting Backend Deployment"
+          echo "Image: $IMAGE_URI"
+          echo "Instances: $BACKEND_INSTANCE_IDS"
+          echo "======================================"
+
+          # Convert comma-separated instance IDs
+          INSTANCE_IDS=$(echo "$BACKEND_INSTANCE_IDS" | tr ',' ' ')
+
+          # Create commands for backend EC2
+          cat > commands.json <<EOF
+          {
+            "commands": [
+              "set -e",
+              "echo Starting backend deployment",
+
+              "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin \$(echo $IMAGE_URI | cut -d/ -f1)",
+
+              "docker pull $IMAGE_URI",
+
+              "docker stop taskhub-backend || true",
+
+              "docker rm taskhub-backend || true",
+
+              "docker run -d --name taskhub-backend --restart unless-stopped -p 8000:8000 $IMAGE_URI",
+
+              "docker ps",
+
+              "echo Backend deployment completed successfully"
+            ]
+          }
+          EOF
+
+          # Send command to BOTH backend instances
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids $INSTANCE_IDS \
+            --parameters file://commands.json \
+            --comment "Deploy backend GitHub SHA $GITHUB_SHA" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          echo "Waiting for deployment..."
+
+          # Wait for command on first instance
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id $(echo "$INSTANCE_IDS" | awk '{print $1}')
+
+          echo "Backend deployment command completed"
+
+
+      # ============================
+      # DEPLOYMENT INFORMATION
+      # ============================
+      - name: Deployment completed
+        run: |
+          echo "======================================"
+          echo "Backend deployment completed"
+          echo "Image:"
+          echo "${{ needs.build-scan-and-push.outputs.image_uri }}"
+          echo "Backend instances:"
+          echo "${{ vars.BACKEND_INSTANCE_IDS }}"
+          echo "======================================"
