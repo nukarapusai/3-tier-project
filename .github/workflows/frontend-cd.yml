@@ -20,11 +20,11 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
-jobs:
+# ==========================================================
+# BUILD, SCAN AND PUSH FRONTEND IMAGE
+# ==========================================================
 
-  # ==========================================================
-  # BUILD, SCAN AND PUSH FRONTEND IMAGE
-  # ==========================================================
+jobs:
 
   build-scan-and-push:
     name: Build, Scan and Push Frontend Image
@@ -127,13 +127,15 @@ jobs:
 
       - name: Display deployment image
         run: |
-          echo "Image successfully pushed:"
+          echo "============================================"
+          echo "Image successfully pushed"
           echo "${{ steps.image.outputs.image_uri }}"
+          echo "============================================"
 
 
-  # ==========================================================
-  # DEPLOY FRONTEND TO EC2
-  # ==========================================================
+# ==========================================================
+# DEPLOY FRONTEND TO EC2
+# ==========================================================
 
   deploy-frontend:
     name: Deploy Frontend to EC2
@@ -169,8 +171,14 @@ jobs:
           echo "============================================"
           echo "Starting Frontend Deployment"
           echo "Image: $IMAGE_URI"
-          echo "Instances: $FRONTEND_INSTANCE_IDS"
+          echo "Instances: $WEB_INSTANCE_IDS"
           echo "============================================"
+
+          # Safety check
+          if [ -z "$WEB_INSTANCE_IDS" ]; then
+            echo "ERROR: WEB_INSTANCE_IDS is empty!"
+            exit 1
+          fi
 
           cat > commands.json <<EOF
           {
@@ -178,37 +186,48 @@ jobs:
               "set -e",
               "echo 'Logging into Amazon ECR'",
               "aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com",
-              "echo 'Pulling latest frontend image'",
+
+              "echo 'Pulling frontend image'",
               "sudo docker pull $IMAGE_URI",
+
               "echo 'Stopping old frontend container'",
               "sudo docker stop taskhub-frontend || true",
+
+              "echo 'Removing old frontend container'",
               "sudo docker rm taskhub-frontend || true",
+
               "echo 'Starting new frontend container'",
               "sudo docker run -d --restart unless-stopped --name taskhub-frontend -p 80:80 $IMAGE_URI",
+
               "echo 'Removing unused Docker images'",
               "sudo docker image prune -af || true",
+
               "echo 'Frontend deployment completed'",
               "sudo docker ps"
             ]
           }
           EOF
 
+          echo "Sending SSM command..."
+
           COMMAND_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=InstanceIds,Values=$FRONTEND_INSTANCE_IDS" \
+            --targets "Key=InstanceIds,Values=$WEB_INSTANCE_IDS" \
             --parameters file://commands.json \
             --comment "Deploy TaskHub Frontend" \
             --region "$AWS_REGION" \
             --query "Command.CommandId" \
             --output text)
 
+          echo "============================================"
           echo "SSM Command ID: $COMMAND_ID"
+          echo "============================================"
 
           echo "Waiting for deployment..."
 
-          sleep 10
+          sleep 5
 
-          for INSTANCE_ID in $(echo "$FRONTEND_INSTANCE_IDS" | tr ',' ' '); do
+          for INSTANCE_ID in $(echo "$WEB_INSTANCE_IDS" | tr ',' ' '); do
 
             echo "============================================"
             echo "Checking deployment on: $INSTANCE_ID"
